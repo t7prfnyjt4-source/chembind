@@ -1,7 +1,17 @@
+# Node
+node_modules/
+dist/
+
+# Python
 __pycache__/
 *.pyc
+
+# Env
 .env
-node_modules/
 .env.local
+
+# OS
+.DS_Store
+
 
 
