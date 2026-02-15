@@ -1,5 +1,5 @@
 from fastapi.testclient import TestClient
-from main import app
+from app.main import app
 
 client = TestClient(app)
 
@@ -9,9 +9,10 @@ def test_root_ok():
     assert r.json().get("ok") is True
 
 def test_analyze_ethanol():
-    r = client.get("/analyze", params={"smiles": "CCO"})
+    r = client.post("/analyze", json={"smiles": "CCO"})
     assert r.status_code == 200
     data = r.json()
-    assert data["smiles"] == "CCO"
-    for k in ["mw", "logp", "hbd", "hba", "tpsa", "num_atoms"]:
-        assert k in data
+    assert data["valid"] is True
+    assert data["canonicalSmiles"] == "CCO"
+    for k in ["mw", "logp", "hbd", "hba", "tpsa", "atom_count"]:
+        assert k in data["descriptors"]

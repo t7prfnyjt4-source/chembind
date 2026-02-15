@@ -3,7 +3,10 @@ channels:
   - conda-forge
 dependencies:
   - python=3.10
-  - rdkit
-  - fastapi
-  - uvicorn
-
+  - rdkit=2023.09.1
+  - pip
+  - pip:
+      - fastapi
+      - uvicorn
+      - pydantic
+      - pytest
