@@ -6,7 +6,15 @@ import uuid
 
 app = FastAPI()
 
-@app.get("/")
+@app".get("/")
+async def root():
+    return {"ok": True}
+
+.get("/health")
+async def health():
+    return {"status": "healthy", "apiVersion": "1.0"}
+
+.get("/")
 def root():
     return {"ok": True}
 

@@ -1,152 +1,100 @@
-import { useMemo, useState } from "react";
+import { useState } from "react";
+import { useAnalyze } from "./hooks/useAnalyze";
 
-type AnalyzeResponse =
-  | {
-      smiles: string;
-      mw: number;
-      logp: number;
-      hbd: number;
-      hba: number;
-      tpsa: number;
-      num_atoms: number;
-    }
-  | { error: string };
+function Metric({ label, value }: { label: string; value: string }) {
+  return (
+    <div style={{ padding: 12, borderRadius: 12, border: "1px solid #e5e7eb" }}>
+      <div style={{ fontSize: 12, opacity: 0.6 }}>{label}</div>
+      <div style={{ fontSize: 20, fontWeight: 700 }}>{value}</div>
+    </div>
+  );
+}
 
 export default function App() {
-  const [smiles, setSmiles] = useState("CCO");
-  const [loading, setLoading] = useState(false);
-  const [result, setResult] = useState<AnalyzeResponse | null>(null);
-  const [err, setErr] = useState<string | null>(null);
+  const [smiles, setSmiles] = useState("");
+  const { data, loading, error, analyze } = useAnalyze();
 
-  const isError = useMemo(() => result && "error" in result, [result]);
-
-  async function analyze() {
-    setLoading(true);
-    setErr(null);
-    setResult(null);
-
-    try {
-      const res = await fetch("/api/analyze", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ smiles }),
-      });
-
-      const data = (await res.json()) as AnalyzeResponse;
-
-      if (!res.ok) {
-        setErr(`HTTP ${res.status}`);
-      }
-      setResult(data);
-    } catch (e: any) {
-      setErr(e?.message ?? "Request failed");
-    } finally {
-      setLoading(false);
-    }
-  }
+  const onSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    const s = smiles.trim();
+    if (s) analyze(s);
+  };
 
   return (
-    <div style={{ maxWidth: 820, margin: "40px auto", padding: 16 }}>
-      <h1 style={{ marginBottom: 8 }}>Chembind — SMILES Analyzer</h1>
-      <p style={{ marginTop: 0, opacity: 0.75 }}>
-        Enter a SMILES string, send it to the FastAPI RDKit backend, and view descriptors.
-      </p>
+    <div style={{ fontFamily: "system-ui", padding: 24, maxWidth: 900, margin: "0 auto" }}>
+      <h1 style={{ fontSize: 34, marginBottom: 8 }}>ChemBind</h1>
+      <div style={{ opacity: 0.7, marginBottom: 16 }}>
+        Enter a SMILES string to compute RDKit descriptors.
+      </div>
 
-      <div style={{ display: "flex", gap: 12, marginTop: 16 }}>
+      <form onSubmit={onSubmit} style={{ display: "flex", gap: 12, marginBottom: 16 }}>
         <input
           value={smiles}
           onChange={(e) => setSmiles(e.target.value)}
-          placeholder="e.g. CCO"
-          style={{
-            flex: 1,
-            padding: "10px 12px",
-            borderRadius: 10,
-            border: "1px solid rgba(255,255,255,0.15)",
-            background: "rgba(255,255,255,0.05)",
-            color: "white",
-          }}
+          placeholder="e.g. CCO, c1ccccc1, CCO.Cl"
+          disabled={loading}
+          style={{ flex: 1, padding: 12, borderRadius: 10, border: "1px solid #ccc" }}
         />
         <button
-          onClick={analyze}
+          type="submit"
           disabled={loading || !smiles.trim()}
-          style={{
-            padding: "10px 14px",
-            borderRadius: 10,
-            border: "1px solid rgba(255,255,255,0.15)",
-            background: loading ? "rgba(255,255,255,0.08)" : "rgba(255,255,255,0.12)",
-            color: "white",
-            cursor: loading ? "not-allowed" : "pointer",
-            minWidth: 120,
-          }}
+          style={{ padding: "12px 16px", borderRadius: 10, border: "1px solid #ccc" }}
         >
           {loading ? "Analyzing…" : "Analyze"}
         </button>
-      </div>
+      </form>
 
-      {err && (
-        <div
-          style={{
-            marginTop: 16,
-            padding: 12,
-            borderRadius: 10,
-            background: "rgba(255,0,0,0.12)",
-          }}
-        >
-          <b>Error:</b> {err}
+      {error && (
+        <div style={{ padding: 12, borderRadius: 10, border: "1px solid #fca5a5", background: "#fef2f2", marginBottom: 16 }}>
+          <div style={{ fontWeight: 800 }}>Network / Backend Error</div>
+          <div>{error}</div>
         </div>
       )}
 
-      {result && (
-        <div style={{ marginTop: 16 }}>
-          <h2 style={{ marginBottom: 8 }}>Result</h2>
+      {loading && (
+        <div style={{ padding: 12, borderRadius: 10, border: "1px solid #93c5fd", background: "#eff6ff", marginBottom: 16 }}>
+          Analyzing molecule…
+        </div>
+      )}
 
-          {!isError && "smiles" in result ? (
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: "repeat(3, 1fr)",
-                gap: 12,
-                marginBottom: 16,
-              }}
-            >
-              <Stat label="MW" value={result.mw} />
-              <Stat label="logP" value={result.logp} />
-              <Stat label="TPSA" value={result.tpsa} />
-              <Stat label="HBD" value={result.hbd} />
-              <Stat label="HBA" value={result.hba} />
-              <Stat label="Atoms" value={result.num_atoms} />
+      {data && !data.valid && (
+        <div style={{ padding: 12, borderRadius: 10, border: "1px solid #fcd34d", background: "#fffbeb", marginBottom: 16 }}>
+          <div style={{ fontWeight: 800 }}>Invalid SMILES</div>
+          <div>{data.error}</div>
+          <div style={{ marginTop: 8, fontSize: 12, opacity: 0.6 }}>Request ID: {data.requestId}</div>
+        </div>
+      )}
+
+      {data && data.valid && data.descriptors && (
+        <div style={{ padding: 16, borderRadius: 12, border: "1px solid #e5e7eb" }}>
+          <div style={{ marginBottom: 12 }}>
+            <div style={{ fontSize: 12, opacity: 0.6 }}>Original SMILES</div>
+            <div style={{ fontFamily: "monospace", fontSize: 18 }}>{data.smiles}</div>
+          </div>
+
+          {data.canonicalSmiles && data.canonicalSmiles !== data.smiles && (
+            <div style={{ marginBottom: 12 }}>
+              <div style={{ fontSize: 12, opacity: 0.6 }}>Canonical SMILES</div>
+              <div style={{ fontFamily: "monospace", fontSize: 18, color: "#16a34a" }}>
+                {data.canonicalSmiles}
+              </div>
             </div>
-          ) : null}
+          )}
 
-          <pre
-            style={{
-              padding: 12,
-              borderRadius: 12,
-              background: "rgba(255,255,255,0.06)",
-              overflowX: "auto",
-            }}
-          >
-            {JSON.stringify(result, null, 2)}
-          </pre>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 12 }}>
+            <Metric label="Molecular Weight" value={`${data.descriptors.mw.toFixed(2)} Da`} />
+            <Metric label="LogP" value={data.descriptors.logp.toFixed(2)} />
+            <Metric label="H-Bond Donors" value={`${data.descriptors.hbd}`} />
+            <Metric label="H-Bond Acceptors" value={`${data.descriptors.hba}`} />
+            <Metric label="TPSA" value={`${data.descriptors.tpsa.toFixed(2)}`} />
+            <Metric label="Atom Count" value={`${data.descriptors.atom_count}`} />
+          </div>
+
+          <div style={{ marginTop: 12, fontSize: 12, opacity: 0.6 }}>
+            Request ID: {data.requestId}
+          </div>
         </div>
       )}
     </div>
   );
 }
-
-function Stat({ label, value }: { label: string; value: number }) {
-  return (
-    <div
-      style={{
-        padding: 12,
-        borderRadius: 12,
-        background: "rgba(255,255,255,0.06)",
-        border: "1px solid rgba(255,255,255,0.10)",
-      }}
-    >
-      <div style={{ fontSize: 12, opacity: 0.75 }}>{label}</div>
-      <div style={{ fontSize: 20, fontWeight: 600 }}>{Number(value).toFixed(3)}</div>
-    </div>
-  );
-}
-
