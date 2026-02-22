@@ -2,11 +2,14 @@ name: chembind
 channels:
   - conda-forge
 dependencies:
-  - python=3.10
-  - rdkit=2023.09.1
+  - python=3.11
+  - rdkit
   - pip
   - pip:
       - fastapi
-      - uvicorn
+      - uvicorn[standard]
       - pydantic
-      - pytest
+      - firebase-admin
+      - python-dotenv
+
+
