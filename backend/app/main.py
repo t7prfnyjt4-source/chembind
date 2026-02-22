@@ -71,6 +71,9 @@ class AnalyzeResponse(BaseModel):
 # -------------------------
 app = FastAPI()
 
+from app.chembind.batch_api import router as batch_router
+app.include_router(batch_router)
+
 if CORS_ORIGINS:
     app.add_middleware(
         CORSMiddleware,

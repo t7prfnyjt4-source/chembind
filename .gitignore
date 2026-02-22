@@ -26,3 +26,18 @@ backend/.venv/
 
 # Large installers
 backend/Miniconda3-latest-Linux-x86_64.sh
+
+# Local secrets
+backend/.env
+backend/.env.*
+keys/
+
+# Secrets
+backend/.env
+backend/.env.*
+keys/
+
+# Secrets
+backend/.env
+backend/.env.*
+keys/
