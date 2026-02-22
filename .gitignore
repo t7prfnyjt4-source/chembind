@@ -19,3 +19,10 @@ backend/Miniconda3-latest-Linux-x86_64.sh
 
 # Large installers
 backend/Miniconda3-latest-Linux-x86_64.sh
+
+# Python venvs
+backend/.venv/
+.venv/
+
+# Large installers
+backend/Miniconda3-latest-Linux-x86_64.sh
