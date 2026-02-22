@@ -4,3 +4,13 @@ firebase-admin
 google-cloud-firestore
 python-dotenv
 rdkit
+
+fastapi
+uvicorn[standard]
+httpx
+pytest
+
+fastapi
+uvicorn[standard]
+httpx
+pytest

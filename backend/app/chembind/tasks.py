@@ -1,156 +1,131 @@
+# app/chembind/tasks.py
+from __future__ import annotations
+
+from typing import Any, Dict
 import os
-import time
-from typing import Any, Dict, List
 
-from celery.exceptions import SoftTimeLimitExceeded
-from celery.utils.log import get_task_logger
-
+from app.chembind.rdkit_safe import compute_descriptors, SmilesValidationError, RdkitLimits
+from app.chembind.firestore_repo import FirestoreRepo
 from app.chembind.celery_app import celery_app
 
-log = get_task_logger(__name__)
 
-# ---------- Firestore helpers ----------
-
-_firestore_client = None
-
-def _get_firestore():
-    global _firestore_client
-    if _firestore_client is not None:
-        return _firestore_client
-    from google.cloud import firestore  # type: ignore
-    project_id = os.getenv("FIRESTORE_PROJECT_ID") or None
-    _firestore_client = firestore.Client(project=project_id)
-    return _firestore_client
-
-def firestore_patch(job_id: str, patch: Dict[str, Any]) -> None:
-    """Best-effort patch. Never kills the job if telemetry fails."""
-    try:
-        db = _get_firestore()
-        ref = db.collection("batch_jobs").document(job_id)
-        patch = dict(patch)
-        patch["updatedAt"] = int(time.time())
-        ref.set(patch, merge=True)
-    except Exception as e:
-        log.warning("Firestore patch failed job_id=%s err=%s", job_id, e)
-
-# ---------- Domain: per-row analysis ----------
-
-def analyze_one_row(row: Dict[str, Any]) -> Dict[str, Any]:
+@celery_app.task(name="chembind.process_batch_job")
+def process_batch_job(uid: str, job_id: str) -> Dict[str, Any]:
     """
-    TODO: replace with your real single-compound pipeline.
-    Current: minimal validation only.
+    Process a batch job:
+    - load input rows from Firestore (users/{uid}/jobs/{jobId}/items)
+    - update job status running
+    - compute descriptors for each row
+    - write per-row item results
+    - update job totals + finished status
     """
-    smiles = row.get("smiles")
-    if not smiles or not isinstance(smiles, str):
-        raise ValueError("Row missing 'smiles'")
-    # Here you should validate with RDKit + compute descriptors
-    time.sleep(0.05)
-    return {"smiles": smiles, "ok": True}
+    repo = FirestoreRepo()
 
-# ---------- Task ----------
+    # ✅ Load input rows for this job from Firestore
+    rows = repo.list_job_items(uid, job_id)
 
-@celery_app.task(name="app.chembind.tasks.process_batch_job", bind=True, max_retries=0)
-def process_batch_job(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-    job_id = payload.get("job_id")
-    rows: List[Dict[str, Any]] = payload.get("rows", [])
-    attempt_cap = int(payload.get("attempt_cap", 3))
-    attempt = int(payload.get("attempt", 1))
-
-    if not job_id or not isinstance(job_id, str):
-        raise ValueError("payload.job_id is required (string)")
-    if not isinstance(rows, list):
-        raise ValueError("payload.rows must be a list")
+    max_smiles_len = int(os.getenv("MAX_SMILES_LEN", "500"))
+    max_atoms = int(os.getenv("MAX_ATOMS", "200"))
+    limits = RdkitLimits(max_smiles_len=max_smiles_len, max_atoms=max_atoms)
 
     total = len(rows)
-    processed = succeeded = failed = 0
-    results: List[Dict[str, Any]] = []
-    errors: List[Dict[str, Any]] = []
+    processed = 0
+    success = 0
+    failed = 0
 
-    firestore_patch(job_id, {
-        "status": "running",
-        "attempt": attempt,
-        "attemptCap": attempt_cap,
-        "total": total,
-        "processed": 0,
-        "succeeded": 0,
-        "failed": 0,
-        "progress": 0.0,
-        "startedAt": payload.get("startedAt") or int(time.time()),
-    })
+    # mark running
+    repo.update_job(
+        uid,
+        job_id,
+        {
+            "status": "running",
+            "total": total,
+            "processed": 0,
+            "successCount": 0,
+            "failureCount": 0,
+        },
+    )
 
-    try:
-        progress_every = int(os.getenv("BATCH_PROGRESS_EVERY", "10"))
+    for idx, row in enumerate(rows):
+        processed += 1
+        smiles = (row.get("smiles") or "").strip()
 
-        for idx, row in enumerate(rows):
-            processed += 1
-            try:
-                out = analyze_one_row(row)
-                results.append({"index": idx, "result": out})
-                succeeded += 1
-            except Exception as e:
-                failed += 1
-                errors.append({"index": idx, "error": str(e)})
+        try:
+            if not smiles:
+                raise ValueError("Missing smiles")
 
-            if processed % progress_every == 0 or processed == total:
-                firestore_patch(job_id, {
+            desc = compute_descriptors(smiles, limits=limits)
+            success += 1
+
+            repo.write_job_item(
+                uid,
+                job_id,
+                item_id=str(idx),
+                payload={
+                    "index": idx,
+                    "smiles": smiles,
+                    "ok": True,
+                    "descriptors": desc,
+                },
+            )
+
+        except (SmilesValidationError, ValueError) as e:
+            failed += 1
+            repo.write_job_item(
+                uid,
+                job_id,
+                item_id=str(idx),
+                payload={
+                    "index": idx,
+                    "smiles": smiles,
+                    "ok": False,
+                    "error": str(e),
+                },
+            )
+
+        except Exception as e:
+            failed += 1
+            repo.write_job_item(
+                uid,
+                job_id,
+                item_id=str(idx),
+                payload={
+                    "index": idx,
+                    "smiles": smiles,
+                    "ok": False,
+                    "error": f"INTERNAL: {repr(e)}",
+                },
+            )
+
+        # progress updates
+        every = int(os.getenv("BATCH_PROGRESS_EVERY", "10"))
+        if processed % every == 0 or processed == total:
+            repo.update_job(
+                uid,
+                job_id,
+                {
                     "processed": processed,
-                    "succeeded": succeeded,
-                    "failed": failed,
-                    "progress": processed / max(1, total),
-                })
+                    "successCount": success,
+                    "failureCount": failed,
+                },
+            )
 
-        firestore_patch(job_id, {
-            "status": "completed",
+    repo.update_job(
+        uid,
+        job_id,
+        {
+            "status": "finished",
             "processed": processed,
-            "succeeded": succeeded,
-            "failed": failed,
-            "progress": 1.0,
-            "completedAt": int(time.time()),
-        })
+            "successCount": success,
+            "failureCount": failed,
+        },
+    )
 
-        return {
-            "job_id": job_id,
-            "status": "completed",
-            "processed": processed,
-            "succeeded": succeeded,
-            "failed": failed,
-            "results": results,
-            "errors": errors,
-        }
-
-    except SoftTimeLimitExceeded:
-        firestore_patch(job_id, {
-            "status": "timed_out",
-            "processed": processed,
-            "succeeded": succeeded,
-            "failed": failed,
-            "progress": processed / max(1, total),
-            "error": "SoftTimeLimitExceeded",
-        })
-        return {
-            "job_id": job_id,
-            "status": "timed_out",
-            "processed": processed,
-            "succeeded": succeeded,
-            "failed": failed,
-            "results": results,
-            "errors": errors,
-        }
-
-    except Exception as e:
-        firestore_patch(job_id, {
-            "status": "failed",
-            "processed": processed,
-            "succeeded": succeeded,
-            "failed": failed,
-            "error": str(e),
-        })
-
-        # Attempt cap: requeue the same payload (you can optimize to requeue remaining rows later)
-        if attempt < attempt_cap:
-            new_payload = dict(payload)
-            new_payload["attempt"] = attempt + 1
-            celery_app.send_task("app.chembind.tasks.process_batch_job", args=[new_payload])
-            firestore_patch(job_id, {"status": "requeued", "attempt": attempt + 1})
-
-        raise
+    return {
+        "jobId": job_id,
+        "status": "finished",
+        "total": total,
+        "processed": processed,
+        "success": success,
+        "failed": failed,
+    }

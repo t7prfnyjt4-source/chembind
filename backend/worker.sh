@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Load backend/.env
+set -a
+source "$(dirname "$0")/.env"
+set +a
+
 : "${CELERY_CONCURRENCY:=2}"
 : "${CELERY_MAX_TASKS_PER_CHILD:=50}"
 : "${CELERY_LOGLEVEL:=INFO}"
