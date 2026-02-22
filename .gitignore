@@ -16,3 +16,6 @@ __pycache__/
 backend/secrets/
 
 backend/Miniconda3-latest-Linux-x86_64.sh
+
+# Large installers
+backend/Miniconda3-latest-Linux-x86_64.sh
