@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from dotenv import load_dotenv
 
-# Always load backend/.env
+# Always load backend/.env BEFORE importing app modules
 ENV_PATH = Path(__file__).resolve().parents[1] / ".env"
 load_dotenv(dotenv_path=ENV_PATH)
 
@@ -11,26 +11,41 @@ import os
 import uuid
 from typing import Optional, Dict, Any
 
-from app.chembind.jobs_api import router as jobs_router
-
 from fastapi import FastAPI, Depends, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.middleware.trustedhost import TrustedHostMiddleware
+
+from app.chembind.logger import request_id_var
 from app.chembind.rdkit_safe import compute_descriptors, SmilesValidationError, RdkitLimits
 from app.chembind.timeout_runner import run_with_timeout, TimeoutConfig, TimeoutError as HardTimeout
 from app.chembind.firebase_admin import extract_bearer_token, verify_bearer_token
 from app.chembind.firestore_repo import FirestoreRepo
-from app.chembind.celery_app import celery_app  # adjust path if needed
+from app.chembind.celery_app import celery_app
+
+from app.chembind.batch_api import router as batch_router
+from app.chembind.jobs_api import router as jobs_router
+
 
 
 # -------------------------
 # Config (env driven)
 # -------------------------
 DEBUG = os.getenv("DEBUG", "0") == "1"
+
 CORS_ORIGINS = [o.strip() for o in os.getenv("CORS_ORIGINS", "").split(",") if o.strip()]
 ANALYZE_TIMEOUT_S = float(os.getenv("ANALYZE_TIMEOUT_S", "2.5"))
+
+TRUSTED_HOSTS = [
+    h.strip()
+    for h in os.getenv("TRUSTED_HOSTS", "localhost,127.0.0.1").split(",")
+    if h.strip()
+]
+
+MAX_REQUEST_BYTES = int(os.getenv("MAX_REQUEST_BYTES", str(2 * 1024 * 1024)))  # 2MB default
 MAX_SMILES_LEN = int(os.getenv("MAX_SMILES_LEN", "500"))
 MAX_ATOMS = int(os.getenv("MAX_ATOMS", "200"))
 
@@ -48,6 +63,79 @@ def err(code: str, message: str, status: int = 400):
         status_code=status,
         content={"error": {"code": code, "message": message}},
     )
+
+
+# -------------------------
+# Segment 4 — Security middlewares
+# -------------------------
+class RequestIdMiddleware(BaseHTTPMiddleware):
+    """
+    - Reads incoming X-Request-Id if present, else generates one.
+    - Stores it in ContextVar for logging.
+    - Adds X-Request-Id to every response.
+    """
+    async def dispatch(self, request, call_next):
+        incoming = request.headers.get("x-request-id")
+        rid = incoming.strip() if incoming else str(uuid.uuid4())
+
+        token = request_id_var.set(rid)
+        try:
+            response = await call_next(request)
+        finally:
+            request_id_var.reset(token)
+
+        response.headers["X-Request-Id"] = rid
+        return response
+
+
+class RequestSizeLimitMiddleware(BaseHTTPMiddleware):
+    """
+    Enforces MAX_REQUEST_BYTES against:
+    - Content-Length header (if present)
+    - Actual body size (always checked)
+    """
+    def __init__(self, app, max_bytes: int):
+        super().__init__(app)
+        self.max_bytes = max_bytes
+
+    async def dispatch(self, request, call_next):
+        cl = request.headers.get("content-length")
+        if cl is not None:
+            try:
+                if int(cl) > self.max_bytes:
+                    return JSONResponse(status_code=413, content={"detail": "Request too large"})
+            except ValueError:
+                return JSONResponse(status_code=400, content={"detail": "Invalid Content-Length header"})
+
+        body = await request.body()
+        if len(body) > self.max_bytes:
+            return JSONResponse(status_code=413, content={"detail": "Request too large"})
+
+        # Re-inject body for downstream handlers
+        async def receive():
+            return {"type": "http.request", "body": body, "more_body": False}
+
+        request._receive = receive  # Starlette internal; common pattern
+        return await call_next(request)
+
+
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    """
+    OWASP-ish baseline response headers.
+    """
+    async def dispatch(self, request, call_next):
+        response = await call_next(request)
+
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["Referrer-Policy"] = "no-referrer"
+        response.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
+
+        # HSTS only when HTTPS
+        if request.url.scheme == "https":
+            response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+
+        return response
 
 
 # -------------------------
@@ -102,23 +190,15 @@ class CreateBatchResponse(BaseModel):
 # -------------------------
 # App
 # -------------------------
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
-
 app = FastAPI()
 
-# -------------------------
-# Routers
-# -------------------------
-from app.chembind.batch_api import router as batch_router
-from app.chembind.jobs_api import router as jobs_router
+# Segment 4 middleware registration ✅
+app.add_middleware(TrustedHostMiddleware, allowed_hosts=TRUSTED_HOSTS)
+app.add_middleware(RequestIdMiddleware)
+app.add_middleware(RequestSizeLimitMiddleware, max_bytes=MAX_REQUEST_BYTES)
+app.add_middleware(SecurityHeadersMiddleware)
 
-app.include_router(batch_router)
-app.include_router(jobs_router)
-
-# -------------------------
 # CORS
-# -------------------------
 if CORS_ORIGINS:
     app.add_middleware(
         CORSMiddleware,
@@ -127,6 +207,12 @@ if CORS_ORIGINS:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+# Routers
+app.include_router(batch_router)
+app.include_router(jobs_router)
+
+
 # -------------------------
 # Exception handlers
 # -------------------------
@@ -151,6 +237,7 @@ async def timeout_handler(_, exc: HardTimeout):
 
 @app.exception_handler(Exception)
 async def unhandled_handler(_, exc: Exception):
+    # Don’t leak internals unless DEBUG is explicitly enabled
     if DEBUG:
         return err("INTERNAL_ERROR_DEBUG", repr(exc), status=500)
     return err("INTERNAL_ERROR", "Unexpected server error", status=500)
@@ -162,6 +249,11 @@ async def unhandled_handler(_, exc: Exception):
 @app.get("/api/health")
 async def health():
     return {"ok": True}
+
+
+@app.head("/api/health")
+async def health_head():
+    return {}
 
 
 @app.post("/api/analyze", response_model=AnalyzeResponse)
