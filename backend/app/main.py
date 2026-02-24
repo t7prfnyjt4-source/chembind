@@ -1,25 +1,21 @@
+# backend/app/main.py
+
 from __future__ import annotations
 
-from pathlib import Path
-from dotenv import load_dotenv
-
-# Always load backend/.env BEFORE importing app modules
-ENV_PATH = Path(__file__).resolve().parents[1] / ".env"
-load_dotenv(dotenv_path=ENV_PATH)
-
+import logging
 import os
 import uuid
 from typing import Optional, Dict, Any
 
-from fastapi import FastAPI, Depends, Header, HTTPException
+from fastapi import FastAPI, Depends, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
-
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
-from app.chembind.logger import request_id_var
+from app.chembind.ratelimit import build_limiter
+from app.chembind.logger import request_id_var, setup_json_logging
 from app.chembind.rdkit_safe import compute_descriptors, SmilesValidationError, RdkitLimits
 from app.chembind.timeout_runner import run_with_timeout, TimeoutConfig, TimeoutError as HardTimeout
 from app.chembind.firebase_admin import extract_bearer_token, verify_bearer_token
@@ -28,7 +24,6 @@ from app.chembind.celery_app import celery_app
 
 from app.chembind.batch_api import router as batch_router
 from app.chembind.jobs_api import router as jobs_router
-
 
 
 # -------------------------
@@ -54,6 +49,24 @@ MAX_BATCH_ROWS = int(os.getenv("MAX_BATCH_ROWS", "500"))
 REQUIRE_IDEMPOTENCY_KEY = os.getenv("REQUIRE_IDEMPOTENCY_KEY", "true").lower() == "true"
 IDEMPOTENCY_TTL_HOURS = int(os.getenv("IDEMPOTENCY_TTL_HOURS", "24"))
 
+# -------------------------
+# Segment 6 — Structured logging + Sentry (env driven)
+# -------------------------
+setup_json_logging(os.getenv("LOG_LEVEL", "INFO"))
+logger = logging.getLogger("chembind")
+
+SENTRY_DSN = os.getenv("SENTRY_DSN", "").strip()
+if SENTRY_DSN:
+    import sentry_sdk
+    sentry_sdk.init(
+        dsn=SENTRY_DSN,
+        environment=os.getenv("ENVIRONMENT", "dev"),
+        traces_sample_rate=float(os.getenv("SENTRY_TRACES_SAMPLE_RATE", "0.0")),
+    )
+    logger.info("Sentry enabled")
+else:
+    logger.info("Sentry disabled (no SENTRY_DSN)")
+
 
 # -------------------------
 # Structured error response
@@ -74,6 +87,7 @@ class RequestIdMiddleware(BaseHTTPMiddleware):
     - Stores it in ContextVar for logging.
     - Adds X-Request-Id to every response.
     """
+
     async def dispatch(self, request, call_next):
         incoming = request.headers.get("x-request-id")
         rid = incoming.strip() if incoming else str(uuid.uuid4())
@@ -94,6 +108,7 @@ class RequestSizeLimitMiddleware(BaseHTTPMiddleware):
     - Content-Length header (if present)
     - Actual body size (always checked)
     """
+
     def __init__(self, app, max_bytes: int):
         super().__init__(app)
         self.max_bytes = max_bytes
@@ -123,6 +138,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     """
     OWASP-ish baseline response headers.
     """
+
     async def dispatch(self, request, call_next):
         response = await call_next(request)
 
@@ -192,7 +208,39 @@ class CreateBatchResponse(BaseModel):
 # -------------------------
 app = FastAPI()
 
-# Segment 4 middleware registration ✅
+# -----------------------------
+# Segment 5 — Rate Limiter
+# -----------------------------
+log = logging.getLogger(__name__)
+limiter = build_limiter()
+
+# SlowAPI middleware expects a real slowapi.Limiter in app.state.limiter.
+# Our decorators use `limiter` (SafeLimiter/NoopLimiter), but middleware must see the inner limiter when present.
+try:
+    app.state.limiter = limiter.inner()  # SafeLimiter -> real limiter
+except AttributeError:
+    app.state.limiter = limiter          # NoopLimiter or already-real limiter
+
+
+# -----------------------------
+# SlowAPI Middleware + 429
+# -----------------------------
+try:
+    from slowapi.errors import RateLimitExceeded
+    from slowapi.middleware import SlowAPIMiddleware
+    from slowapi import _rate_limit_exceeded_handler
+
+    # Only enable middleware when we have a real limiter (SafeLimiter wraps one)
+    if hasattr(limiter, "inner"):
+        app.add_middleware(SlowAPIMiddleware)
+        app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+except Exception as e:
+    log.warning(f"SlowAPI not enabled: {e}")
+
+# ---------------------------
+# Segment 4 middleware registration
+# ---------------------------
 app.add_middleware(TrustedHostMiddleware, allowed_hosts=TRUSTED_HOSTS)
 app.add_middleware(RequestIdMiddleware)
 app.add_middleware(RequestSizeLimitMiddleware, max_bytes=MAX_REQUEST_BYTES)
@@ -209,9 +257,8 @@ if CORS_ORIGINS:
     )
 
 # Routers
-app.include_router(batch_router)
+# app.include_router(batch_router)
 app.include_router(jobs_router)
-
 
 # -------------------------
 # Exception handlers
@@ -256,8 +303,18 @@ async def health_head():
     return {}
 
 
-@app.post("/api/analyze", response_model=AnalyzeResponse)
-async def analyze(req: AnalyzeRequest, user: Optional[Dict[str, Any]] = Depends(get_optional_user)):
+# ✅ Replace BOTH @app.post(...) lines with this one
+
+@app.post(
+    "/api/analyze",
+    response_model=AnalyzeResponse,
+    dependencies=[Depends(limiter)],
+)
+async def analyze(
+    request: Request,
+    req: AnalyzeRequest,
+    user: Optional[Dict[str, Any]] = Depends(get_optional_user),
+):
     limits = RdkitLimits(max_smiles_len=MAX_SMILES_LEN, max_atoms=MAX_ATOMS)
     cfg = TimeoutConfig(seconds=ANALYZE_TIMEOUT_S)
 
@@ -272,21 +329,28 @@ async def analyze(req: AnalyzeRequest, user: Optional[Dict[str, Any]] = Depends(
         repo = FirestoreRepo()
         repo.save_analysis(
             user["uid"],
-            {
-                "smiles": req.smiles,
-                "descriptors": descriptors,
-            },
+            {"smiles": req.smiles, "descriptors": descriptors},
         )
 
     return {"smiles": req.smiles, "descriptors": descriptors}
 
 
-@app.post("/api/batch", response_model=CreateBatchResponse)
+@app.post(
+    "/api/batch",
+    response_model=CreateBatchResponse,
+    dependencies=[Depends(limiter)],
+)
 async def create_batch(
+    request: Request,
     payload: CreateBatchRequest,
-    user: Dict[str, Any] = Depends(get_required_user),
+    user: Optional[Dict[str, Any]] = Depends(get_optional_user),
     idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
 ):
+
+    # Enforce auth AFTER limiter runs
+    if not user or not user.get("uid"):
+        raise HTTPException(status_code=401, detail="UNAUTHORIZED")
+
     uid = user["uid"]
 
     if REQUIRE_IDEMPOTENCY_KEY and not idempotency_key:
