@@ -8,6 +8,8 @@ services:
       interval: 5s
       timeout: 3s
       retries: 20
+    volumes:
+      - redis_data:/data
 
   backend:
     build:
@@ -38,12 +40,12 @@ services:
       - REDIS_URL=redis://redis:6379/0
       - CELERY_BROKER_URL=redis://redis:6379/0
       - CELERY_RESULT_BACKEND=redis://redis:6379/1
-      - GOOGLE_APPLICATION_CREDENTIALS=/run/secrets/firebase-service.json
       - CELERY_APP=app.chembind.celery_app:celery_app
       - CELERY_CONCURRENCY=2
       - CELERY_MAX_TASKS_PER_CHILD=200
       - CELERY_POOL=prefork
       - CELERY_QUEUES=default
+      - GOOGLE_APPLICATION_CREDENTIALS=/run/secrets/firebase-service.json
     volumes:
       - ./keys/firebase-service.json:/run/secrets/firebase-service.json:ro
     depends_on:
@@ -58,3 +60,6 @@ services:
       - "5173:80"
     depends_on:
       - backend
+
+volumes:
+  redis_data:
