@@ -1,18 +1,60 @@
 services:
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
   backend:
     build:
-      context: ./backend
+      context: .
+      dockerfile: backend/Dockerfile
     ports:
       - "8000:8000"
+    command: ["micromamba", "run", "-n", "app", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
     environment:
       - PYTHONPATH=/app
-    command: micromamba run -n chembind uvicorn app.main:app --host 0.0.0.0 --port 8000
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/1
+      - GOOGLE_APPLICATION_CREDENTIALS=/run/secrets/firebase-service.json
+    volumes:
+      - ./keys/firebase-service.json:/run/secrets/firebase-service.json:ro
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  worker:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    command: ["/app/worker.sh"]
+    environment:
+      - PYTHONPATH=/app
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/1
+      - GOOGLE_APPLICATION_CREDENTIALS=/run/secrets/firebase-service.json
+      - CELERY_APP=app.chembind.celery_app:celery_app
+      - CELERY_CONCURRENCY=2
+      - CELERY_MAX_TASKS_PER_CHILD=200
+      - CELERY_POOL=prefork
+      - CELERY_QUEUES=default
+    volumes:
+      - ./keys/firebase-service.json:/run/secrets/firebase-service.json:ro
+    depends_on:
+      redis:
+        condition: service_healthy
 
   frontend:
     build:
-      context: ./frontend
+      context: .
+      dockerfile: frontend/Dockerfile
     ports:
-      - "5173:5173"
-    environment:
-      - VITE_API_BASE=http://localhost:8000
-    command: npm run dev -- --host 0.0.0.0 --port 5173
+      - "5173:80"
+    depends_on:
+      - backend

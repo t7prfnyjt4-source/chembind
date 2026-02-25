@@ -1,16 +1,15 @@
 fastapi
 uvicorn[standard]
+
 firebase-admin
 google-cloud-firestore
 python-dotenv
 rdkit
 
-fastapi
-uvicorn[standard]
 httpx
 pytest
 
-fastapi
-uvicorn[standard]
-httpx
-pytest
+celery>=5.3
+redis>=5
+
+python-json-logger

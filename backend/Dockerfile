@@ -1,17 +1,37 @@
-FROM mambaorg/micromamba:1.5.10
+FROM mambaorg/micromamba:2.5.0
+
+ENV MAMBA_DOCKERFILE_ACTIVATE=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
 
 WORKDIR /app
 
-COPY environment.yml /app/environment.yml
-COPY requirements-dev.txt /app/requirements-dev.txt
+USER root
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl ca-certificates tini \
+  && rm -rf /var/lib/apt/lists/*
+USER mambauser
 
-RUN micromamba create -y -n chembind -f /app/environment.yml && \
-    micromamba run -n chembind pip install --no-cache-dir fastapi uvicorn && \
-    micromamba run -n chembind pip install --no-cache-dir -r /app/requirements-dev.txt && \
+COPY --chown=mambauser:mambauser backend/environment.yml /app/environment.yml
+COPY --chown=mambauser:mambauser backend/requirements.txt /app/requirements.txt
+
+RUN if [ -f /app/environment.yml ]; then \
+      micromamba create -y -n app -f /app/environment.yml; \
+    else \
+      micromamba create -y -n app python=3.11; \
+    fi && \
+    micromamba run -n app python -V && \
+    if [ -f /app/requirements.txt ]; then \
+      micromamba run -n app pip install --no-cache-dir -r /app/requirements.txt; \
+    fi && \
     micromamba clean -a -y
 
-COPY . /app
+COPY --chown=mambauser:mambauser backend /app
+COPY --chown=mambauser:mambauser backend/worker.sh /app/worker.sh
+RUN chmod +x /app/worker.sh
 
 EXPOSE 8000
 
-CMD ["micromamba", "run", "-n", "chembind", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+ENTRYPOINT ["/usr/bin/tini","--"]
+
+CMD ["micromamba","run","-n","app","uvicorn","app.main:app","--host","0.0.0.0","--port","8000"]
