@@ -41,3 +41,8 @@ keys/
 backend/.env
 backend/.env.*
 keys/
+
+# Local backups
+*.tar.gz
+*.bundle
+*_backup_*.zip
