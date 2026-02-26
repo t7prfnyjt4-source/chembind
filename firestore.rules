@@ -1,0 +1,37 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(uid) {
+      return signedIn() && request.auth.uid == uid;
+    }
+
+    match /users/{uid} {
+      // Only the owner can read their user document
+      allow read: if isOwner(uid);
+
+      // analyses under the user
+      match /analyses/{docId} {
+        allow read, write: if isOwner(uid);
+      }
+
+      // jobs under the user (and nested items)
+      match /jobs/{jobId} {
+        allow read, write: if isOwner(uid);
+
+        match /items/{itemId} {
+          allow read, write: if isOwner(uid);
+        }
+      }
+
+      // idempotency keys under the user
+      match /idempotency/{key} {
+        allow read, write: if isOwner(uid);
+      }
+    }
+  }
+}
