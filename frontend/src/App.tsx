@@ -1,12 +1,15 @@
 import { useEffect, useState } from "react";
-import type { User } from "firebase/auth";
+
 import {
+  type User,
   onAuthStateChanged,
   GoogleAuthProvider,
   signInWithPopup,
   signOut,
 } from "firebase/auth";
+
 import { auth } from "./firebase/config";
+
 
 type Page = "analyze" | "batch" | "history" | "search";
 
