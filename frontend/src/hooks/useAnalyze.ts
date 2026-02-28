@@ -1,28 +1,36 @@
-import { useState } from "react";
-import { analyzeSMILES } from "../api/client";
+import { useCallback, useState } from "react";
 import type { AnalyzeResponse } from "../api/types";
+import { analyzeSMILES } from "../api/client";
+
+type UseAnalyzeState = {
+  loading: boolean;
+  error: string | null;
+  data: AnalyzeResponse | null;
+};
 
 export function useAnalyze() {
-  const [data, setData] = useState<AnalyzeResponse | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [state, setState] = useState<UseAnalyzeState>({
+    loading: false,
+    error: null,
+    data: null,
+  });
 
-  async function analyze(smiles: string) {
-    setLoading(true);
-    setError(null);
-    setData(null);
+  const analyze = useCallback(async (smiles: string) => {
+    setState((s) => ({ ...s, loading: true, error: null }));
 
     try {
-      const result = await analyzeSMILES(smiles);
-      setData(result);
-      return result;
+      const res = await analyzeSMILES(smiles);
+      setState({ loading: false, error: null, data: res });
+      return res;
     } catch (e: any) {
-      setError(e?.message ?? "Analyze failed");
+      const msg =
+        typeof e?.message === "string" && e.message.length > 0
+          ? e.message
+          : "Analyze failed";
+      setState((s) => ({ ...s, loading: false, error: msg }));
       throw e;
-    } finally {
-      setLoading(false);
     }
-  }
+  }, []);
 
-  return { data, loading, error, analyze };
+  return { ...state, analyze };
 }
