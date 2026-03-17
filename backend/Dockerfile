@@ -34,4 +34,5 @@ EXPOSE 8000
 
 ENTRYPOINT ["/usr/bin/tini","--"]
 
-CMD ["micromamba","run","-n","app","uvicorn","app.main:app","--host","0.0.0.0","--port","8000"]
+ENV PORT=8000
+CMD ["sh","-c","exec micromamba run -n app uvicorn app.main:app --host 0.0.0.0 --port ${PORT}"]

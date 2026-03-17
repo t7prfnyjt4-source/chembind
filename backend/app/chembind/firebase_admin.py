@@ -1,6 +1,7 @@
 # app/chembind/firebase_admin.py
 from __future__ import annotations
 
+import json
 import os
 from typing import Optional, Dict, Any
 
@@ -12,15 +13,15 @@ def init_firebase() -> None:
     """
     Initialize Firebase Admin once.
     Uses:
-    - GOOGLE_APPLICATION_CREDENTIALS (ADC) if present
-    - or FIREBASE_SERVICE_ACCOUNT_JSON (raw JSON string) if you want that approach
+    - FIREBASE_SERVICE_ACCOUNT_JSON (raw JSON string) — preferred for Railway/Render
+    - GOOGLE_APPLICATION_CREDENTIALS (ADC) as fallback
     """
     if firebase_admin._apps:
         return
 
     sa_json = os.getenv("FIREBASE_SERVICE_ACCOUNT_JSON")
     if sa_json:
-        cred = credentials.Certificate(eval(sa_json))  # NOTE: prefer json.loads in your final version
+        cred = credentials.Certificate(json.loads(sa_json))
         firebase_admin.initialize_app(cred)
         return
 
