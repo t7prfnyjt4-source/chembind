@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from typing import Dict, Any
 
 from rdkit import Chem
-from rdkit.Chem import Descriptors, Crippen, rdMolDescriptors
+from rdkit.Chem import AllChem, Descriptors, Crippen, rdMolDescriptors
 from rdkit import RDLogger
 
 RDLogger.DisableLog("rdApp.error")
@@ -39,6 +39,12 @@ def smiles_to_mol(smiles: str, limits: RdkitLimits) -> Chem.Mol:
         raise SmilesValidationError(f"Too many atoms ({atom_count} > {limits.max_atoms})")
 
     return mol
+
+
+def compute_morgan_fp(mol: Chem.Mol, radius: int = 2, n_bits: int = 2048) -> str:
+    """Compute Morgan fingerprint as a bit string."""
+    fp = AllChem.GetMorganFingerprintAsBitVect(mol, radius, nBits=n_bits)
+    return fp.ToBitString()
 
 
 def compute_descriptors(smiles: str, limits: RdkitLimits | None = None) -> Dict[str, Any]:

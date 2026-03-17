@@ -16,7 +16,7 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from app.chembind.ratelimit import build_limiter
 from app.chembind.logger import request_id_var, setup_json_logging
-from app.chembind.rdkit_safe import compute_descriptors, SmilesValidationError, RdkitLimits
+from app.chembind.rdkit_safe import compute_descriptors, compute_morgan_fp, smiles_to_mol, SmilesValidationError, RdkitLimits
 from app.chembind.timeout_runner import run_with_timeout, TimeoutConfig, TimeoutError as HardTimeout
 from app.chembind.firebase_admin import extract_bearer_token, verify_bearer_token
 from app.chembind.firestore_repo import FirestoreRepo
@@ -325,12 +325,20 @@ async def analyze(
         limits=limits,
     )
 
+    # Compute Morgan fingerprint (non-breaking: runs outside timeout for simplicity)
+    morgan_fp: str | None = None
+    try:
+        mol = smiles_to_mol(req.smiles, limits)
+        morgan_fp = compute_morgan_fp(mol)
+    except Exception:
+        pass  # fingerprint is optional; don't fail the request
+
     if user:
         repo = FirestoreRepo()
-        repo.save_analysis(
-            user["uid"],
-            {"smiles": req.smiles, "descriptors": descriptors},
-        )
+        record: dict = {"smiles": req.smiles, "descriptors": descriptors}
+        if morgan_fp:
+            record["morganFp2048"] = morgan_fp
+        repo.save_analysis(user["uid"], record)
 
     return {"smiles": req.smiles, "descriptors": descriptors}
 

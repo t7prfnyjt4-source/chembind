@@ -4,7 +4,7 @@ from __future__ import annotations
 from typing import Any, Dict
 import os
 
-from app.chembind.rdkit_safe import compute_descriptors, SmilesValidationError, RdkitLimits
+from app.chembind.rdkit_safe import compute_descriptors, compute_morgan_fp, smiles_to_mol, SmilesValidationError, RdkitLimits
 from app.chembind.firestore_repo import FirestoreRepo
 from app.chembind.celery_app import celery_app
 
@@ -55,18 +55,31 @@ def process_batch_job(uid: str, job_id: str) -> Dict[str, Any]:
                 raise ValueError("Missing smiles")
 
             desc = compute_descriptors(smiles, limits=limits)
+
+            # Compute Morgan fingerprint (non-breaking)
+            morgan_fp = None
+            try:
+                mol = smiles_to_mol(smiles, limits)
+                morgan_fp = compute_morgan_fp(mol)
+            except Exception:
+                pass
+
+            item_payload: Dict[str, Any] = {
+                "index": idx,
+                "smiles": smiles,
+                "ok": True,
+                "descriptors": desc,
+            }
+            if morgan_fp:
+                item_payload["morganFp2048"] = morgan_fp
+
             success += 1
 
             repo.write_job_item(
                 uid,
                 job_id,
                 item_id=str(idx),
-                payload={
-                    "index": idx,
-                    "smiles": smiles,
-                    "ok": True,
-                    "descriptors": desc,
-                },
+                payload=item_payload,
             )
 
         except (SmilesValidationError, ValueError) as e:
