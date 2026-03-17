@@ -10,8 +10,13 @@ import { useJobItems } from "../hooks/useJobItems";
 import { BatchJobProgress } from "./BatchJobProgress";
 import { JobResultsTable } from "./JobResultsTable";
 
+type Row = {
+  rowId: number;
+  smiles: string;
+};
+
 type Props = {
-  token: string;
+  token?: string;
 };
 
 export default function BatchUpload({ token }: Props) {
@@ -19,16 +24,21 @@ export default function BatchUpload({ token }: Props) {
   const uid = auth.currentUser?.uid ?? null;
 
   const [csvText, setCsvText] = useState("");
-  const [rows, setRows] = useState<any[]>([]);
+  const [rows, setRows] = useState<Row[]>([]);
   const [jobId, setJobId] = useState<string | null>(null);
   const [viewJobId, setViewJobId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const preview = useMemo(() => rows.slice(0, 10), [rows]);
 
-  const { job: activeJob, loading: activeJobLoading, error: activeJobError } = useBatchJob(uid, jobId);
-  const { jobs, loading: jobsLoading, error: jobsError } = useJobList(uid);
-  const { items, loading: itemsLoading, error: itemsError } = useJobItems(uid, viewJobId, Boolean(viewJobId));
+  const { job: activeJob, loading: activeJobLoading, error: activeJobError } =
+    useBatchJob(uid, jobId);
+
+  const { jobs, loading: jobsLoading, error: jobsError } =
+    useJobList(uid);
+
+  const { items, loading: itemsLoading, error: itemsError } =
+    useJobItems(uid, viewJobId, Boolean(viewJobId));
 
   async function onFile(file: File) {
     setError(null);
@@ -47,20 +57,25 @@ export default function BatchUpload({ token }: Props) {
   }
 
   async function submit() {
-    if (!token || rows.length === 0) return;
+    if (rows.length === 0) return;
 
     try {
       setError(null);
 
       const key = await sha256Hex(csvText);
 
+      const headers: Record<string, string> = {
+        "Content-Type": "application/json",
+        "Idempotency-Key": key,
+      };
+
+      if (token) {
+        headers.Authorization = `Bearer ${token}`;
+      }
+
       const res = await fetch("/api/batch", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-          "Idempotency-Key": key,
-        },
+        headers,
         body: JSON.stringify({
           rows,
           source: "csv",
@@ -72,17 +87,18 @@ export default function BatchUpload({ token }: Props) {
         throw new Error(msg || `HTTP ${res.status}`);
       }
 
-      const data = await res.json();
-      const newJobId = data.job_id as string | undefined;
+      const data = (await res.json()) as { job_id?: string };
+      const newJobId = data.job_id;
 
       if (!newJobId) {
         throw new Error("Missing job_id in response.");
       }
 
-      setJobId(newJobId);     // track progress
-      setViewJobId(null);     // close old results
-    } catch (e) {
-      setError("Upload failed.");
+      setJobId(newJobId);
+      setViewJobId(null);
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : "Upload failed.";
+      setError(msg);
     }
   }
 
@@ -100,7 +116,7 @@ export default function BatchUpload({ token }: Props) {
         aria-label="csv-file"
         type="file"
         accept=".csv"
-        onChange={(e) => {
+        onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
           const f = e.target.files?.[0];
           if (f) onFile(f);
         }}
@@ -111,6 +127,7 @@ export default function BatchUpload({ token }: Props) {
           <p>
             Preview (first {Math.min(10, rows.length)} of {rows.length})
           </p>
+
           <table>
             <thead>
               <tr>
@@ -118,6 +135,7 @@ export default function BatchUpload({ token }: Props) {
                 <th>smiles</th>
               </tr>
             </thead>
+
             <tbody>
               {preview.map((r) => (
                 <tr key={r.rowId}>
@@ -130,9 +148,19 @@ export default function BatchUpload({ token }: Props) {
         </div>
       )}
 
-      <button aria-label="submit" onClick={submit} disabled={rows.length === 0}>
+      <button
+        aria-label="submit"
+        onClick={submit}
+        disabled={rows.length === 0}
+      >
         Submit
       </button>
+
+      {error && (
+        <div style={{ color: "#991b1b", marginTop: 8 }}>
+          {error}
+        </div>
+      )}
 
       {jobId && (
         <p aria-label="job-id">
@@ -140,8 +168,17 @@ export default function BatchUpload({ token }: Props) {
         </p>
       )}
 
-      {activeJobLoading && <div style={{ color: "#6b7280", marginTop: 8 }}>Loading job…</div>}
-      {activeJobError && <div style={{ color: "#991b1b", marginTop: 8 }}>{activeJobError}</div>}
+      {activeJobLoading && (
+        <div style={{ color: "#6b7280", marginTop: 8 }}>
+          Loading job…
+        </div>
+      )}
+
+      {activeJobError && (
+        <div style={{ color: "#991b1b", marginTop: 8 }}>
+          {activeJobError}
+        </div>
+      )}
 
       {activeJob && (
         <>
@@ -165,11 +202,31 @@ export default function BatchUpload({ token }: Props) {
         </>
       )}
 
+      {viewJobId && (
+        <div style={{ marginTop: 16 }}>
+          <h3>Results for {viewJobId}</h3>
+          <JobResultsTable
+            items={items}
+            loading={itemsLoading}
+            error={itemsError}
+          />
+        </div>
+      )}
+
       <div style={{ marginTop: 18 }}>
         <h3 style={{ margin: 0 }}>Past jobs</h3>
 
-        {jobsLoading && <div style={{ color: "#6b7280", marginTop: 6 }}>Loading jobs…</div>}
-        {jobsError && <div style={{ color: "#991b1b", marginTop: 6 }}>{jobsError}</div>}
+        {jobsLoading && (
+          <div style={{ color: "#6b7280", marginTop: 6 }}>
+            Loading jobs…
+          </div>
+        )}
+
+        {jobsError && (
+          <div style={{ color: "#991b1b", marginTop: 6 }}>
+            {jobsError}
+          </div>
+        )}
 
         {!jobsLoading && jobs.length === 0 && (
           <div style={{ color: "#6b7280", marginTop: 6 }}>
@@ -194,6 +251,7 @@ export default function BatchUpload({ token }: Props) {
                 <div style={{ fontWeight: 600 }}>
                   <code>{j.id}</code>
                 </div>
+
                 <div style={{ color: "#6b7280", fontSize: 13 }}>
                   {j.status} • {j.processed ?? 0}/{j.total ?? "?"}
                 </div>
@@ -218,14 +276,6 @@ export default function BatchUpload({ token }: Props) {
                 <button
                   disabled={j.status !== "completed"}
                   onClick={() => setViewJobId(j.id)}
-                  style={{
-                    padding: "6px 10px",
-                    borderRadius: 10,
-                    border: "1px solid #e5e7eb",
-                    background: j.status === "completed" ? "#fff" : "#f9fafb",
-                    color: j.status === "completed" ? "#111827" : "#9ca3af",
-                    cursor: j.status === "completed" ? "pointer" : "not-allowed",
-                  }}
                 >
                   View Results
                 </button>
@@ -234,24 +284,6 @@ export default function BatchUpload({ token }: Props) {
           ))}
         </div>
       </div>
-
-      {viewJobId && (
-        <div style={{ marginTop: 18 }}>
-          <h3 style={{ margin: 0 }}>
-            Results for <code>{viewJobId}</code>
-          </h3>
-
-          {itemsLoading && <div style={{ color: "#6b7280", marginTop: 6 }}>Loading results…</div>}
-          {itemsError && <div style={{ color: "#991b1b", marginTop: 6 }}>{itemsError}</div>}
-          {!itemsLoading && !itemsError && <JobResultsTable items={items} />}
-        </div>
-      )}
-
-      {error && (
-        <p aria-label="error" style={{ color: "red" }}>
-          {error}
-        </p>
-      )}
     </div>
   );
 }

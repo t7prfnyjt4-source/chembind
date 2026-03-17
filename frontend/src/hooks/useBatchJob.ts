@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
-import { doc, onSnapshot } from "firebase/firestore";
-import { db } from "../firebase"; // adjust if your firebase file path differs
+import { doc, onSnapshot, Timestamp } from "firebase/firestore";
+import { db } from "../firebase/config";
 
 export type JobStatus = "queued" | "running" | "completed" | "failed";
 
 export type JobDoc = {
   status: JobStatus;
-  createdAt?: any;
+  createdAt?: Timestamp | { seconds: number } | null;
   total?: number;
   processed?: number;
   successCount?: number;
@@ -20,26 +20,23 @@ type UseBatchJobResult = {
   error: string | null;
 };
 
+function errMsg(e: unknown): string {
+  if (e instanceof Error) return e.message;
+  return String(e);
+}
+
 export function useBatchJob(
   uid: string | null | undefined,
   jobId: string | null | undefined
 ): UseBatchJobResult {
   const [job, setJob] = useState<(JobDoc & { id: string }) | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   const enabled = useMemo(() => Boolean(uid && jobId), [uid, jobId]);
 
   useEffect(() => {
-    if (!enabled) {
-      setJob(null);
-      setLoading(false);
-      setError(null);
-      return;
-    }
-
-    setLoading(true);
-    setError(null);
+    if (!enabled) return;
 
     const ref = doc(db, "users", uid!, "jobs", jobId!);
 
@@ -53,10 +50,11 @@ export function useBatchJob(
           return;
         }
         setJob({ id: snap.id, ...(snap.data() as JobDoc) });
+        setError(null);
         setLoading(false);
       },
-      (e) => {
-        setError(e.message || "Failed to subscribe to job.");
+      (e: unknown) => {
+        setError(errMsg(e) || "Failed to subscribe to job.");
         setLoading(false);
       }
     );

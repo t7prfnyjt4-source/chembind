@@ -33,7 +33,7 @@ describe("BatchUpload", () => {
       });
     });
 
-    // @ts-ignore
+    // @ts-expect-error - test overrides fetch with a mock
     global.fetch = fetchMock;
 
     render(<BatchUpload token="TOKEN_ABC" />);
@@ -74,6 +74,6 @@ CCC
     expect(body.rows[0].smiles).toBe("CCO");
 
     const jobEl = await screen.findByLabelText("job-id");
-expect(jobEl).toHaveTextContent("job_123");
+    expect(jobEl).toHaveTextContent("job_123");
   });
 });

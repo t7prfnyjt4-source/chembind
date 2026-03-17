@@ -64,7 +64,7 @@ describe("BatchUpload (Segment 17)", () => {
       jobs: [
         {
           id: "job_completed",
-          status: "completed",
+status: "completed",
           processed: 2,
           total: 2,
           createdAt: null,
@@ -127,7 +127,7 @@ describe("BatchUpload (Segment 17)", () => {
       vi.fn(async () => {
         return {
           ok: true,
-          json: async () => ({ job_id: "job_from_api" }),
+ json: async () => ({ job_id: "job_from_api" }),
           text: async () => "",
           status: 200,
         } as any;
@@ -187,7 +187,7 @@ describe("BatchUpload (Segment 17)", () => {
     // Table contains a valid item + an error item
     expect(screen.getByText("Parse error")).toBeInTheDocument();
     expect(screen.getAllByText("CCO").length).toBeGreaterThanOrEqual(2);
-  });
+});
 
   it("job list renders past jobs, and Track switches the active job", async () => {
     render(<BatchUpload token="tkn" />);
@@ -211,3 +211,4 @@ describe("BatchUpload (Segment 17)", () => {
     expect(screen.getByText(/Sign in to see job progress\/results/i)).toBeInTheDocument();
   });
 });
+
