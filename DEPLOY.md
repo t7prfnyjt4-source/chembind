@@ -74,7 +74,7 @@ If creating manually:
 
 ---
 
-## 4. Verify
+## 4. Verify Backend
 
 ```bash
 # API health
@@ -84,6 +84,47 @@ curl -s https://YOUR-API/api/health
 # Check worker logs in Railway/Render dashboard
 # Expected: "ready" message, no Redis connection errors
 ```
+
+---
+
+## 5. Deploy Frontend (Vercel)
+
+1. Go to [vercel.com](https://vercel.com/) → Add New Project → Import GitHub repo
+2. Framework Preset: **Vite**
+3. Root Directory: **frontend**
+4. Build Command: `npm run build` (auto-detected)
+5. Output Directory: `dist` (auto-detected)
+6. Add environment variables:
+
+| Variable | Value |
+|---|---|
+| `VITE_API_BASE` | `https://YOUR-API-DOMAIN` (your Railway/Render API URL) |
+| `VITE_FIREBASE_API_KEY` | From Firebase Console → Project Settings → Web App |
+| `VITE_FIREBASE_AUTH_DOMAIN` | `your-project.firebaseapp.com` |
+| `VITE_FIREBASE_PROJECT_ID` | Your Firebase project ID |
+| `VITE_FIREBASE_APP_ID` | From Firebase Console |
+
+7. Deploy.
+
+### Post-Deploy Steps
+
+1. **Firebase Console** → Authentication → Settings → Authorized domains → **Add your Vercel domain** (e.g., `your-app.vercel.app`)
+2. **Update backend CORS_ORIGINS** → add `https://your-app.vercel.app`
+3. **Update backend TRUSTED_HOSTS** → add your API domain (if not already)
+4. Redeploy backend after env var changes.
+
+### Verify Frontend
+
+1. Open `https://your-app.vercel.app` in browser
+2. Click "Sign in with Google" → should complete OAuth flow
+3. Try Analyze with a SMILES string → should return descriptors
+4. Check browser console for CORS errors (there should be none)
+
+---
+
+## 6. vercel.json (SPA Routing)
+
+A `vercel.json` is included in `frontend/` to handle SPA routing (all paths → `index.html`) and optional API rewrites. Vercel auto-detects this.
 
 ---
 
