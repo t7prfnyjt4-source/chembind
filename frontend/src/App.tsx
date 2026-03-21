@@ -13,8 +13,9 @@ import { auth } from "./firebase/config";
 import AnalysisHistory from "./components/AnalysisHistory";
 import MoleculeSearch from "./components/MoleculeSearch";
 import ConformerPlayer from "./components/ConformerPlayer";
+import DockingScreen from "./components/DockingScreen";
 
-type Page = "analyze" | "batch" | "history" | "search";
+type Page = "analyze" | "batch" | "history" | "search" | "docking";
 
 function Spinner({ label = "Loading…" }: { label?: string }) {
   return (
@@ -107,6 +108,7 @@ export default function App() {
         <button onClick={() => setPage("batch")}>Batch</button>
         <button onClick={() => setPage("history")}>History</button>
         <button onClick={() => setPage("search")}>Search</button>
+        <button onClick={() => setPage("docking")}>Docking</button>
       </div>
 
       <div
@@ -149,6 +151,12 @@ export default function App() {
         {page === "search" && (
           <div>
             <MoleculeSearch onSelectSmiles={(smi) => { setAnalyzeSmiles(smi); setPage("analyze"); }} />
+          </div>
+        )}
+
+        {page === "docking" && (
+          <div>
+            <DockingScreen />
           </div>
         )}
       </div>
