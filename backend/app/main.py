@@ -562,3 +562,115 @@ async def conformers_endpoint(
             pass
 
     return {"conformers": confs, "cached": False}
+
+
+# -------------------------
+# Segment 33 — Docking API Endpoints
+# -------------------------
+MAX_PDB_UPLOAD_BYTES = int(os.getenv("MAX_PDB_UPLOAD_BYTES", str(10 * 1024 * 1024)))
+MAX_DOCKING_MODES = int(os.getenv("MAX_DOCKING_MODES", "20"))
+
+from app.chembind.tier_gating import check_tier
+
+
+@app.post(
+    "/api/docking/jobs",
+    dependencies=[Depends(limiter)],
+)
+async def create_docking_job(
+    request: Request,
+    user: Dict[str, Any] = Depends(get_required_user),
+):
+    if not ENABLE_DOCKING:
+        raise HTTPException(status_code=404, detail="Feature not enabled")
+
+    check_tier(user, "enterprise")
+
+    form = await request.form()
+    smiles = form.get("smiles", "")
+    if not smiles or not isinstance(smiles, str):
+        raise HTTPException(status_code=400, detail="smiles field required")
+
+    # Validate SMILES
+    from rdkit import Chem
+    if Chem.MolFromSmiles(smiles) is None:
+        raise HTTPException(status_code=400, detail="Invalid SMILES")
+
+    pdb_file = form.get("pdb_file")
+    if not pdb_file:
+        raise HTTPException(status_code=400, detail="pdb_file required")
+
+    pdb_content = (await pdb_file.read()).decode("utf-8", errors="replace")
+    if len(pdb_content.encode()) > MAX_PDB_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail=f"PDB file too large (max {MAX_PDB_UPLOAD_BYTES} bytes)")
+
+    if not pdb_content.strip().startswith(("ATOM", "HEADER", "REMARK", "TITLE", "CRYST")):
+        raise HTTPException(status_code=400, detail="File does not appear to be a valid PDB")
+
+    center_x = float(form.get("center_x", 0))
+    center_y = float(form.get("center_y", 0))
+    center_z = float(form.get("center_z", 0))
+    size_x = float(form.get("size_x", 20))
+    size_y = float(form.get("size_y", 20))
+    size_z = float(form.get("size_z", 20))
+    exhaustiveness = min(int(form.get("exhaustiveness", 8)), 32)
+    num_modes = min(int(form.get("num_modes", 9)), MAX_DOCKING_MODES)
+
+    job_id = uuid.uuid4().hex
+    repo = FirestoreRepo()
+    repo.create_docking_job(user["uid"], job_id, {
+        "smiles": smiles,
+        "center": [center_x, center_y, center_z],
+        "size": [size_x, size_y, size_z],
+        "exhaustiveness": exhaustiveness,
+        "numModes": num_modes,
+    })
+
+    celery_app.send_task("chembind.run_docking_job", args=[
+        user["uid"], job_id, smiles, pdb_content,
+        [center_x, center_y, center_z],
+        [size_x, size_y, size_z],
+        exhaustiveness, num_modes,
+    ])
+
+    return {"jobId": job_id, "status": "queued"}
+
+
+@app.get(
+    "/api/docking/jobs/{job_id}",
+    dependencies=[Depends(limiter)],
+)
+async def get_docking_job_status(
+    request: Request,
+    job_id: str,
+    user: Dict[str, Any] = Depends(get_required_user),
+):
+    if not ENABLE_DOCKING:
+        raise HTTPException(status_code=404, detail="Feature not enabled")
+
+    repo = FirestoreRepo()
+    job = repo.get_docking_job(user["uid"], job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return job
+
+
+@app.get(
+    "/api/docking/jobs/{job_id}/poses",
+    dependencies=[Depends(limiter)],
+)
+async def get_docking_poses(
+    request: Request,
+    job_id: str,
+    user: Dict[str, Any] = Depends(get_required_user),
+):
+    if not ENABLE_DOCKING:
+        raise HTTPException(status_code=404, detail="Feature not enabled")
+
+    repo = FirestoreRepo()
+    job = repo.get_docking_job(user["uid"], job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    poses = repo.list_docking_poses(user["uid"], job_id)
+    return {"poses": poses}

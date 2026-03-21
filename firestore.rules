@@ -32,6 +32,26 @@ service cloud.firestore {
       match /idempotency/{key} {
         allow read, write: if isOwner(uid);
       }
+
+      // docking jobs and poses
+      match /docking_jobs/{jobId} {
+        allow read, write: if isOwner(uid);
+
+        match /poses/{poseId} {
+          allow read, write: if isOwner(uid);
+        }
+      }
+
+      // annotations
+      match /annotations/{annotationId} {
+        allow read, write: if isOwner(uid);
+      }
+    }
+
+    // shared annotations — public read
+    match /shared_annotations/{shareId} {
+      allow read: if true;
+      allow write: if signedIn();
     }
   }
 }
