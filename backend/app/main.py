@@ -726,3 +726,116 @@ async def export_molecule(
         media_type=media_type,
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+# -------------------------
+# Segments 46-48 — Collaborative Annotations
+# -------------------------
+class CreateAnnotationRequest(BaseModel):
+    title: str = Field(..., max_length=200)
+    smiles: str = Field(..., max_length=500)
+    viewerState: Optional[Dict[str, Any]] = None
+    notes: list = Field(default_factory=list)
+
+
+class UpdateAnnotationRequest(BaseModel):
+    title: Optional[str] = None
+    viewerState: Optional[Dict[str, Any]] = None
+    notes: Optional[list] = None
+
+
+@app.post(
+    "/api/annotations",
+    dependencies=[Depends(limiter)],
+)
+async def create_annotation(
+    request: Request,
+    req: CreateAnnotationRequest,
+    user: Dict[str, Any] = Depends(get_required_user),
+):
+    if not ENABLE_ANNOTATIONS:
+        raise HTTPException(status_code=404, detail="Feature not enabled")
+
+    check_tier(user, "team")
+
+    repo = FirestoreRepo()
+    annotation_id = repo.create_annotation(user["uid"], req.dict())
+    return {"id": annotation_id}
+
+
+@app.get(
+    "/api/annotations",
+    dependencies=[Depends(limiter)],
+)
+async def list_annotations(
+    request: Request,
+    user: Dict[str, Any] = Depends(get_required_user),
+):
+    if not ENABLE_ANNOTATIONS:
+        raise HTTPException(status_code=404, detail="Feature not enabled")
+
+    repo = FirestoreRepo()
+    annotations = repo.list_annotations(user["uid"])
+    return {"annotations": annotations}
+
+
+@app.put(
+    "/api/annotations/{annotation_id}",
+    dependencies=[Depends(limiter)],
+)
+async def update_annotation(
+    request: Request,
+    annotation_id: str,
+    req: UpdateAnnotationRequest,
+    user: Dict[str, Any] = Depends(get_required_user),
+):
+    if not ENABLE_ANNOTATIONS:
+        raise HTTPException(status_code=404, detail="Feature not enabled")
+
+    repo = FirestoreRepo()
+    existing = repo.get_annotation(user["uid"], annotation_id)
+    if not existing:
+        raise HTTPException(status_code=404, detail="Annotation not found")
+
+    update_data = {k: v for k, v in req.dict().items() if v is not None}
+    if update_data:
+        repo.update_annotation(user["uid"], annotation_id, update_data)
+    return {"ok": True}
+
+
+@app.post(
+    "/api/annotations/{annotation_id}/share",
+    dependencies=[Depends(limiter)],
+)
+async def share_annotation(
+    request: Request,
+    annotation_id: str,
+    user: Dict[str, Any] = Depends(get_required_user),
+):
+    if not ENABLE_ANNOTATIONS:
+        raise HTTPException(status_code=404, detail="Feature not enabled")
+
+    repo = FirestoreRepo()
+    annotation = repo.get_annotation(user["uid"], annotation_id)
+    if not annotation:
+        raise HTTPException(status_code=404, detail="Annotation not found")
+
+    share_id = uuid.uuid4().hex[:16]
+    share_data = dict(annotation)
+    share_data.pop("id", None)
+    share_data["shareId"] = share_id
+    share_data["sharedBy"] = user["uid"]
+
+    repo.share_annotation(share_id, share_data)
+
+    return {"shareId": share_id, "url": f"/shared/{share_id}"}
+
+
+@app.get("/api/shared/{share_id}")
+async def get_shared_annotation(share_id: str):
+    """Public endpoint — no auth required."""
+    repo = FirestoreRepo()
+    annotation = repo.get_shared_annotation(share_id)
+    if not annotation:
+        raise HTTPException(status_code=404, detail="Shared annotation not found")
+    return annotation

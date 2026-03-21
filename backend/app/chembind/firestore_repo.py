@@ -320,6 +320,69 @@ class FirestoreRepo:
             out.append(item)
         return out
 
+    # -------------------------
+    # Annotations
+    # users/{uid}/annotations/{id}
+    # shared_annotations/{shareId}
+    # -------------------------
+    def create_annotation(self, uid: str, data: Dict[str, Any]) -> str:
+        col = self.db.collection("users").document(uid).collection("annotations")
+        doc_ref = col.document()
+        payload = dict(data)
+        payload.setdefault("created_at", _now_iso())
+        payload["updated_at"] = _now_iso()
+        doc_ref.set(payload)
+        return doc_ref.id
+
+    def list_annotations(self, uid: str, limit: int = 50) -> List[Dict[str, Any]]:
+        col = self.db.collection("users").document(uid).collection("annotations")
+        qs = col.order_by("created_at", direction="DESCENDING").limit(limit).stream()
+        out: List[Dict[str, Any]] = []
+        for d in qs:
+            item = d.to_dict() or {}
+            item["id"] = d.id
+            out.append(item)
+        return out
+
+    def get_annotation(self, uid: str, annotation_id: str) -> Optional[Dict[str, Any]]:
+        doc = (
+            self.db.collection("users")
+            .document(uid)
+            .collection("annotations")
+            .document(annotation_id)
+            .get()
+        )
+        if not doc.exists:
+            return None
+        item = doc.to_dict() or {}
+        item["id"] = doc.id
+        return item
+
+    def update_annotation(self, uid: str, annotation_id: str, data: Dict[str, Any]) -> None:
+        doc_ref = (
+            self.db.collection("users")
+            .document(uid)
+            .collection("annotations")
+            .document(annotation_id)
+        )
+        payload = dict(data)
+        payload["updated_at"] = _now_iso()
+        doc_ref.set(payload, merge=True)
+
+    def share_annotation(self, share_id: str, data: Dict[str, Any]) -> None:
+        doc_ref = self.db.collection("shared_annotations").document(share_id)
+        payload = dict(data)
+        payload["shared_at"] = _now_iso()
+        doc_ref.set(payload)
+
+    def get_shared_annotation(self, share_id: str) -> Optional[Dict[str, Any]]:
+        doc = self.db.collection("shared_annotations").document(share_id).get()
+        if not doc.exists:
+            return None
+        item = doc.to_dict() or {}
+        item["id"] = doc.id
+        return item
+
     def set_idempotent_job(self, uid: str, key: str, job_id: str, ttl_hours: int = 24) -> None:
         doc_ref = (
             self.db.collection("users")

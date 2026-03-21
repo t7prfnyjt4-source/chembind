@@ -15,8 +15,10 @@ import MoleculeSearch from "./components/MoleculeSearch";
 import ConformerPlayer from "./components/ConformerPlayer";
 import DockingScreen from "./components/DockingScreen";
 import ExportButtons from "./components/ExportButtons";
+import AnnotationsTab from "./components/AnnotationsTab";
+import SharedView from "./components/SharedView";
 
-type Page = "analyze" | "batch" | "history" | "search" | "docking";
+type Page = "analyze" | "batch" | "history" | "search" | "docking" | "annotations";
 
 function Spinner({ label = "Loading…" }: { label?: string }) {
   return (
@@ -47,6 +49,12 @@ function Spinner({ label = "Loading…" }: { label?: string }) {
 }
 
 export default function App() {
+  // Check for /shared/{id} route
+  const sharedMatch = window.location.pathname.match(/^\/shared\/([a-z0-9]+)$/i);
+  if (sharedMatch) {
+    return <SharedView shareId={sharedMatch[1]} />;
+  }
+
   const [user, setUser] = useState<User | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [page, setPage] = useState<Page>("analyze");
@@ -110,6 +118,7 @@ export default function App() {
         <button onClick={() => setPage("history")}>History</button>
         <button onClick={() => setPage("search")}>Search</button>
         <button onClick={() => setPage("docking")}>Docking</button>
+        <button onClick={() => setPage("annotations")}>Annotations</button>
       </div>
 
       <div
@@ -163,6 +172,12 @@ export default function App() {
         {page === "docking" && (
           <div>
             <DockingScreen />
+          </div>
+        )}
+
+        {page === "annotations" && (
+          <div>
+            <AnnotationsTab onSelectSmiles={(smi) => { setAnalyzeSmiles(smi); setPage("analyze"); }} />
           </div>
         )}
       </div>
