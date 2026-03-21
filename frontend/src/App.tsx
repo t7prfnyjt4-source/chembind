@@ -14,6 +14,7 @@ import AnalysisHistory from "./components/AnalysisHistory";
 import MoleculeSearch from "./components/MoleculeSearch";
 import ConformerPlayer from "./components/ConformerPlayer";
 import DockingScreen from "./components/DockingScreen";
+import ExportButtons from "./components/ExportButtons";
 
 type Page = "analyze" | "batch" | "history" | "search" | "docking";
 
@@ -131,7 +132,12 @@ export default function App() {
                 style={{ padding: "6px 10px", fontFamily: "monospace", flex: 1, maxWidth: 400 }}
               />
             </div>
-            {analyzeSmiles.trim() && <ConformerPlayer smiles={analyzeSmiles.trim()} />}
+            {analyzeSmiles.trim() && (
+              <>
+                <ExportButtons smiles={analyzeSmiles.trim()} />
+                <ConformerPlayer smiles={analyzeSmiles.trim()} />
+              </>
+            )}
           </div>
         )}
 

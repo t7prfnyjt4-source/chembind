@@ -674,3 +674,55 @@ async def get_docking_poses(
 
     poses = repo.list_docking_poses(user["uid"], job_id)
     return {"poses": poses}
+
+
+# -------------------------
+# Segment 38 — Export Endpoint
+# -------------------------
+from fastapi.responses import Response
+
+
+@app.get(
+    "/api/export",
+    dependencies=[Depends(limiter)],
+)
+async def export_molecule(
+    request: Request,
+    smiles: str,
+    format: str = "mol",
+    user: Dict[str, Any] = Depends(get_required_user),
+):
+    if not ENABLE_EXPORT:
+        raise HTTPException(status_code=404, detail="Feature not enabled")
+
+    check_tier(user, "professional")
+
+    if format not in ("mol", "sdf", "cdxml"):
+        raise HTTPException(status_code=400, detail="format must be mol, sdf, or cdxml")
+
+    from rdkit import Chem
+    mol = Chem.MolFromSmiles(smiles)
+    if mol is None:
+        raise HTTPException(status_code=400, detail="Invalid SMILES")
+
+    if format == "mol":
+        from app.chembind.export.formats import mol_to_mol
+        content = mol_to_mol(mol)
+        media_type = "chemical/x-mdl-molfile"
+        filename = "molecule.mol"
+    elif format == "sdf":
+        from app.chembind.export.formats import mol_to_sdf
+        content = mol_to_sdf(mol)
+        media_type = "chemical/x-mdl-sdfile"
+        filename = "molecule.sdf"
+    else:
+        from app.chembind.export.cdxml import mol_to_cdxml
+        content = mol_to_cdxml(mol)
+        media_type = "application/xml"
+        filename = "molecule.cdxml"
+
+    return Response(
+        content=content,
+        media_type=media_type,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
