@@ -54,6 +54,9 @@ IDEMPOTENCY_TTL_HOURS = int(os.getenv("IDEMPOTENCY_TTL_HOURS", "24"))
 # Feature flags
 ENABLE_SIMILARITY_SEARCH = os.getenv("ENABLE_SIMILARITY_SEARCH", "false").lower() == "true"
 ENABLE_CONFORMERS = os.getenv("ENABLE_CONFORMERS", "false").lower() == "true"
+ENABLE_DOCKING = os.getenv("ENABLE_DOCKING", "false").lower() == "true"
+ENABLE_EXPORT = os.getenv("ENABLE_EXPORT", "false").lower() == "true"
+ENABLE_ANNOTATIONS = os.getenv("ENABLE_ANNOTATIONS", "false").lower() == "true"
 
 # -------------------------
 # Segment 6 — Structured logging + Sentry (env driven)
