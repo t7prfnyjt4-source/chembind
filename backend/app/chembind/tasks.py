@@ -4,6 +4,8 @@ from __future__ import annotations
 from typing import Any, Dict
 import os
 
+import base64
+import io
 from app.chembind.rdkit_safe import compute_descriptors, compute_morgan_fp, smiles_to_mol, SmilesValidationError, RdkitLimits
 from app.chembind.firestore_repo import FirestoreRepo
 from app.chembind.celery_app import celery_app
@@ -64,6 +66,18 @@ def process_batch_job(uid: str, job_id: str) -> Dict[str, Any]:
             except Exception:
                 pass
 
+            # Generate thumbnail (non-breaking)
+            thumbnail = None
+            try:
+                from rdkit.Chem import Draw
+                thumb_mol = smiles_to_mol(smiles, limits)
+                img = Draw.MolToImage(thumb_mol, size=(200, 200))
+                buf = io.BytesIO()
+                img.save(buf, format="PNG")
+                thumbnail = base64.b64encode(buf.getvalue()).decode()
+            except Exception:
+                pass
+
             item_payload: Dict[str, Any] = {
                 "index": idx,
                 "smiles": smiles,
@@ -72,6 +86,8 @@ def process_batch_job(uid: str, job_id: str) -> Dict[str, Any]:
             }
             if morgan_fp:
                 item_payload["morganFp2048"] = morgan_fp
+            if thumbnail:
+                item_payload["thumbnail"] = thumbnail
 
             success += 1
 
