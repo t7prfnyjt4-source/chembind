@@ -18,6 +18,7 @@ from app.chembind.ratelimit import build_limiter
 from app.chembind.logger import request_id_var, setup_json_logging
 from app.chembind.rdkit_safe import compute_descriptors, compute_morgan_fp, smiles_to_mol, SmilesValidationError, RdkitLimits
 from app.chembind.similarity import tanimoto_search, substructure_search
+from app.chembind.conformers import generate_conformers, conformer_cache_key
 from app.chembind.timeout_runner import run_with_timeout, TimeoutConfig, TimeoutError as HardTimeout
 from app.chembind.firebase_admin import extract_bearer_token, verify_bearer_token
 from app.chembind.firestore_repo import FirestoreRepo
@@ -52,6 +53,7 @@ IDEMPOTENCY_TTL_HOURS = int(os.getenv("IDEMPOTENCY_TTL_HOURS", "24"))
 
 # Feature flags
 ENABLE_SIMILARITY_SEARCH = os.getenv("ENABLE_SIMILARITY_SEARCH", "false").lower() == "true"
+ENABLE_CONFORMERS = os.getenv("ENABLE_CONFORMERS", "false").lower() == "true"
 
 # -------------------------
 # Segment 6 — Structured logging + Sentry (env driven)
@@ -498,3 +500,62 @@ async def unified_search(
         )
 
     return {"results": results, "mode": req.mode}
+
+
+# -------------------------
+# Segment 26 — Conformer Ensemble
+# -------------------------
+def _get_redis():
+    """Return a Redis client or None if unavailable."""
+    try:
+        import redis
+        url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+        return redis.from_url(url, decode_responses=True)
+    except Exception:
+        return None
+
+
+class ConformerRequest(BaseModel):
+    smiles: str = Field(..., max_length=500)
+    num_confs: int = Field(20, ge=1, le=50)
+
+
+@app.post(
+    "/api/conformers",
+    dependencies=[Depends(limiter)],
+)
+async def conformers_endpoint(
+    request: Request,
+    req: ConformerRequest,
+    user: Dict[str, Any] = Depends(get_required_user),
+):
+    if not ENABLE_CONFORMERS:
+        raise HTTPException(status_code=404, detail="Feature not enabled")
+
+    import json as _json
+
+    cache_key = conformer_cache_key(req.smiles, req.num_confs)
+    rds = _get_redis()
+
+    # Check cache
+    if rds:
+        try:
+            cached = rds.get(cache_key)
+            if cached:
+                return {"conformers": _json.loads(cached), "cached": True}
+        except Exception:
+            pass
+
+    confs = generate_conformers(
+        smiles=req.smiles,
+        num_confs=req.num_confs,
+    )
+
+    # Store in cache (1h TTL)
+    if rds:
+        try:
+            rds.setex(cache_key, 3600, _json.dumps(confs))
+        except Exception:
+            pass
+
+    return {"conformers": confs, "cached": False}
