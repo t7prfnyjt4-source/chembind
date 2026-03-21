@@ -16,3 +16,4 @@ python-json-logger
 
 meeko>=0.5.0
 slowapi
+prolif>=2.0.0

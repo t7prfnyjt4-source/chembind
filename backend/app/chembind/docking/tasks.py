@@ -68,6 +68,16 @@ def run_docking_job(
                 output_dir=tmpdir,
             )
 
+        # Analyze interactions for top 5 poses (circuit breaker)
+        try:
+            from app.chembind.docking.interactions import analyze_interactions
+            for pose in poses[:5]:
+                result = analyze_interactions(pdb_content, pose["atoms"], smiles)
+                if result["interactions"]:
+                    pose["interactions"] = result["interactions"]
+        except Exception as e:
+            logger.warning(f"Interaction analysis failed (non-fatal): {e}")
+
         # Save poses
         repo.save_docking_poses(uid, job_id, poses)
 
