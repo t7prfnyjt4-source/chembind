@@ -230,6 +230,96 @@ class FirestoreRepo:
 
         return job_id if isinstance(job_id, str) and job_id else None
 
+    # -------------------------
+    # Docking Jobs
+    # users/{uid}/docking_jobs/{jobId}
+    # users/{uid}/docking_jobs/{jobId}/poses/{poseId}
+    # -------------------------
+    def create_docking_job(self, uid: str, job_id: str, data: Dict[str, Any]) -> str:
+        doc_ref = (
+            self.db.collection("users")
+            .document(uid)
+            .collection("docking_jobs")
+            .document(job_id)
+        )
+        payload = dict(data)
+        payload["jobId"] = job_id
+        payload.setdefault("status", "queued")
+        payload.setdefault("created_at", _now_iso())
+        payload["updated_at"] = _now_iso()
+        doc_ref.set(payload, merge=True)
+        return job_id
+
+    def update_docking_job(self, uid: str, job_id: str, patch: Dict[str, Any]) -> None:
+        doc_ref = (
+            self.db.collection("users")
+            .document(uid)
+            .collection("docking_jobs")
+            .document(job_id)
+        )
+        payload = dict(patch)
+        payload["updated_at"] = _now_iso()
+        doc_ref.set(payload, merge=True)
+
+    def get_docking_job(self, uid: str, job_id: str) -> Optional[Dict[str, Any]]:
+        doc = (
+            self.db.collection("users")
+            .document(uid)
+            .collection("docking_jobs")
+            .document(job_id)
+            .get()
+        )
+        if not doc.exists:
+            return None
+        item = doc.to_dict() or {}
+        item["id"] = doc.id
+        return item
+
+    def save_docking_poses(
+        self, uid: str, job_id: str, poses: List[Dict[str, Any]]
+    ) -> None:
+        col = (
+            self.db.collection("users")
+            .document(uid)
+            .collection("docking_jobs")
+            .document(job_id)
+            .collection("poses")
+        )
+        for pose in poses:
+            pose_id = str(pose.get("pose_id", "0"))
+            doc_ref = col.document(pose_id)
+            payload = dict(pose)
+            payload["created_at"] = _now_iso()
+            doc_ref.set(payload)
+
+    def list_docking_poses(
+        self, uid: str, job_id: str, limit: int = 50
+    ) -> List[Dict[str, Any]]:
+        col = (
+            self.db.collection("users")
+            .document(uid)
+            .collection("docking_jobs")
+            .document(job_id)
+            .collection("poses")
+        )
+        qs = col.order_by("score").limit(limit).stream()
+        out: List[Dict[str, Any]] = []
+        for d in qs:
+            item = d.to_dict() or {}
+            item["id"] = d.id
+            out.append(item)
+        return out
+
+    def list_docking_jobs(self, uid: str, limit: int = 20) -> List[Dict[str, Any]]:
+        col = self.db.collection("users").document(uid).collection("docking_jobs")
+        qs = col.order_by("created_at", direction="DESCENDING").limit(limit).stream()
+        out: List[Dict[str, Any]] = []
+        for d in qs:
+            item = d.to_dict() or {}
+            item["id"] = d.id
+            out.append(item)
+        return out
+
     def set_idempotent_job(self, uid: str, key: str, job_id: str, ttl_hours: int = 24) -> None:
         doc_ref = (
             self.db.collection("users")
