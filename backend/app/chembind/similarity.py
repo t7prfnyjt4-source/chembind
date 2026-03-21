@@ -1,13 +1,13 @@
 # app/chembind/similarity.py
-"""Tanimoto similarity search over user analysis history."""
+"""Tanimoto similarity and substructure search over user analysis history."""
 from __future__ import annotations
 
 from typing import Any, Dict, List
 
-from rdkit import DataStructs
+from rdkit import Chem, DataStructs
 from rdkit.DataStructs import ExplicitBitVect
 
-from .rdkit_safe import compute_morgan_fp, smiles_to_mol, RdkitLimits
+from .rdkit_safe import compute_morgan_fp, smiles_to_mol, SmilesValidationError, RdkitLimits
 
 
 def _bitstring_to_fp(bitstring: str) -> ExplicitBitVect:
@@ -53,3 +53,38 @@ def tanimoto_search(
 
     results.sort(key=lambda r: r["similarity"], reverse=True)
     return results[:top_k]
+
+
+def substructure_search(
+    smarts: str,
+    history_docs: List[Dict[str, Any]],
+    max_results: int = 50,
+) -> List[Dict[str, Any]]:
+    """
+    Find molecules in history that contain the given SMARTS substructure.
+    Returns up to max_results matches.
+    """
+    query = Chem.MolFromSmarts(smarts)
+    if query is None:
+        raise SmilesValidationError(f"Invalid SMARTS: {smarts}")
+
+    results: list[dict] = []
+    for doc in history_docs:
+        smi = doc.get("smiles")
+        if not smi:
+            continue
+
+        mol = Chem.MolFromSmiles(smi)
+        if mol is None:
+            continue
+
+        if mol.HasSubstructMatch(query):
+            results.append({
+                "doc_id": doc.get("id", ""),
+                "smiles": smi,
+                "descriptors": doc.get("descriptors", {}),
+            })
+            if len(results) >= max_results:
+                break
+
+    return results

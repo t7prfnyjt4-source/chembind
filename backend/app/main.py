@@ -17,7 +17,7 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 from app.chembind.ratelimit import build_limiter
 from app.chembind.logger import request_id_var, setup_json_logging
 from app.chembind.rdkit_safe import compute_descriptors, compute_morgan_fp, smiles_to_mol, SmilesValidationError, RdkitLimits
-from app.chembind.similarity import tanimoto_search
+from app.chembind.similarity import tanimoto_search, substructure_search
 from app.chembind.timeout_runner import run_with_timeout, TimeoutConfig, TimeoutError as HardTimeout
 from app.chembind.firebase_admin import extract_bearer_token, verify_bearer_token
 from app.chembind.firestore_repo import FirestoreRepo
@@ -452,3 +452,49 @@ async def similarity_search(
     )
 
     return {"results": results}
+
+
+# -------------------------
+# Segment 24 — Unified Search (similarity + substructure)
+# -------------------------
+class UnifiedSearchRequest(BaseModel):
+    query: str = Field(..., max_length=500)
+    mode: str = Field("similarity")  # "similarity" or "substructure"
+    top_k: int = Field(10, ge=1, le=50)
+    min_sim: float = Field(0.3, ge=0.0, le=1.0)
+    max_results: int = Field(50, ge=1, le=200)
+
+
+@app.post(
+    "/api/search",
+    dependencies=[Depends(limiter)],
+)
+async def unified_search(
+    request: Request,
+    req: UnifiedSearchRequest,
+    user: Dict[str, Any] = Depends(get_required_user),
+):
+    if not ENABLE_SIMILARITY_SEARCH:
+        raise HTTPException(status_code=404, detail="Feature not enabled")
+
+    if req.mode not in ("similarity", "substructure"):
+        raise HTTPException(status_code=400, detail="mode must be 'similarity' or 'substructure'")
+
+    repo = FirestoreRepo()
+    history = repo.list_analyses(user["uid"], limit=500)
+
+    if req.mode == "similarity":
+        results = tanimoto_search(
+            query_smiles=req.query,
+            history_docs=history,
+            top_k=req.top_k,
+            min_sim=req.min_sim,
+        )
+    else:
+        results = substructure_search(
+            smarts=req.query,
+            history_docs=history,
+            max_results=req.max_results,
+        )
+
+    return {"results": results, "mode": req.mode}
