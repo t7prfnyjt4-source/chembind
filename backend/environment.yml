@@ -4,6 +4,7 @@ channels:
 dependencies:
   - python=3.11
   - rdkit
+  - autodock-vina
   - pip
   - pip:
       - fastapi

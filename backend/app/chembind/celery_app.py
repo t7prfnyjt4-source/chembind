@@ -37,7 +37,7 @@ def make_celery() -> Celery:
         "chembind",
         broker=broker,
         backend=backend,
-        include=["app.chembind.tasks"],
+        include=["app.chembind.tasks", "app.chembind.docking.tasks"],
     )
 
     # --- Optional tuning from environment ---
