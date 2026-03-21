@@ -12,6 +12,7 @@ import {
 import { auth } from "./firebase/config";
 import AnalysisHistory from "./components/AnalysisHistory";
 import MoleculeSearch from "./components/MoleculeSearch";
+import ConformerPlayer from "./components/ConformerPlayer";
 
 type Page = "analyze" | "batch" | "history" | "search";
 
@@ -47,6 +48,7 @@ export default function App() {
   const [user, setUser] = useState<User | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [page, setPage] = useState<Page>("analyze");
+  const [analyzeSmiles, setAnalyzeSmiles] = useState("");
 
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, (u) => {
@@ -118,7 +120,16 @@ export default function App() {
         {page === "analyze" && (
           <div>
             <div style={{ fontWeight: 600, marginBottom: 6 }}>Analyze</div>
-            <div style={{ opacity: 0.8 }}>Analyze page placeholder</div>
+            <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
+              <input
+                type="text"
+                value={analyzeSmiles}
+                onChange={(e) => setAnalyzeSmiles(e.target.value)}
+                placeholder="e.g. CCO"
+                style={{ padding: "6px 10px", fontFamily: "monospace", flex: 1, maxWidth: 400 }}
+              />
+            </div>
+            {analyzeSmiles.trim() && <ConformerPlayer smiles={analyzeSmiles.trim()} />}
           </div>
         )}
 
@@ -137,7 +148,7 @@ export default function App() {
 
         {page === "search" && (
           <div>
-            <MoleculeSearch onSelectSmiles={(smi) => { setPage("analyze"); /* TODO: populate analyze input */ }} />
+            <MoleculeSearch onSelectSmiles={(smi) => { setAnalyzeSmiles(smi); setPage("analyze"); }} />
           </div>
         )}
       </div>
