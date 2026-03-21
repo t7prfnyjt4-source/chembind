@@ -11,6 +11,7 @@ import {
 
 import { auth } from "./firebase/config";
 import AnalysisHistory from "./components/AnalysisHistory";
+import MoleculeSearch from "./components/MoleculeSearch";
 
 type Page = "analyze" | "batch" | "history" | "search";
 
@@ -136,8 +137,7 @@ export default function App() {
 
         {page === "search" && (
           <div>
-            <div style={{ fontWeight: 600, marginBottom: 6 }}>Search</div>
-            <div style={{ opacity: 0.8 }}>Search page placeholder</div>
+            <MoleculeSearch onSelectSmiles={(smi) => { setPage("analyze"); /* TODO: populate analyze input */ }} />
           </div>
         )}
       </div>
