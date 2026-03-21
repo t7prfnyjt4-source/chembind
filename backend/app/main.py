@@ -17,6 +17,7 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 from app.chembind.ratelimit import build_limiter
 from app.chembind.logger import request_id_var, setup_json_logging
 from app.chembind.rdkit_safe import compute_descriptors, compute_morgan_fp, smiles_to_mol, SmilesValidationError, RdkitLimits
+from app.chembind.similarity import tanimoto_search
 from app.chembind.timeout_runner import run_with_timeout, TimeoutConfig, TimeoutError as HardTimeout
 from app.chembind.firebase_admin import extract_bearer_token, verify_bearer_token
 from app.chembind.firestore_repo import FirestoreRepo
@@ -48,6 +49,9 @@ MAX_ATOMS = int(os.getenv("MAX_ATOMS", "200"))
 MAX_BATCH_ROWS = int(os.getenv("MAX_BATCH_ROWS", "500"))
 REQUIRE_IDEMPOTENCY_KEY = os.getenv("REQUIRE_IDEMPOTENCY_KEY", "true").lower() == "true"
 IDEMPOTENCY_TTL_HOURS = int(os.getenv("IDEMPOTENCY_TTL_HOURS", "24"))
+
+# Feature flags
+ENABLE_SIMILARITY_SEARCH = os.getenv("ENABLE_SIMILARITY_SEARCH", "false").lower() == "true"
 
 # -------------------------
 # Segment 6 — Structured logging + Sentry (env driven)
@@ -414,3 +418,37 @@ async def create_batch(
 @app.get("/api/me")
 async def me(user: Dict[str, Any] = Depends(get_required_user)):
     return {"uid": user["uid"]}
+
+
+# -------------------------
+# Segment 23 — Similarity Search
+# -------------------------
+class SimilaritySearchRequest(BaseModel):
+    smiles: str = Field(..., max_length=500)
+    top_k: int = Field(10, ge=1, le=50)
+    min_sim: float = Field(0.3, ge=0.0, le=1.0)
+
+
+@app.post(
+    "/api/similarity/search",
+    dependencies=[Depends(limiter)],
+)
+async def similarity_search(
+    request: Request,
+    req: SimilaritySearchRequest,
+    user: Dict[str, Any] = Depends(get_required_user),
+):
+    if not ENABLE_SIMILARITY_SEARCH:
+        raise HTTPException(status_code=404, detail="Feature not enabled")
+
+    repo = FirestoreRepo()
+    history = repo.list_analyses(user["uid"], limit=500)
+
+    results = tanimoto_search(
+        query_smiles=req.smiles,
+        history_docs=history,
+        top_k=req.top_k,
+        min_sim=req.min_sim,
+    )
+
+    return {"results": results}
